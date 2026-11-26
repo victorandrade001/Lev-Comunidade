@@ -190,6 +190,7 @@
 #lev-ecosystem-switcher .lev-switch-note{border-top:1px solid #e6deed;margin-top:5px;padding:10px 7px 3px;font-size:11px;color:#625b69;line-height:1.45}
 @media(max-width:600px){#lev-ecosystem-switcher{top:8px;right:8px}#lev-ecosystem-switcher summary{font-size:12px;min-height:36px;padding:6px 10px 6px 6px}#lev-ecosystem-switcher .lev-switch-icon{width:22px;height:22px;font-size:11px}#lev-ecosystem-switcher .lev-switch-panel{min-width:min(285px,calc(100vw - 20px))}}
 </style>
+<script src="./firebase-config.js"></script>
 </head>
 <body>
 <section class="central-login" id="centralLogin" aria-label="Acesso à Central Editorial">
@@ -283,6 +284,7 @@ let ARTICLES=clone(INITIAL_NEWS);
 try{const saved=JSON.parse(localStorage.getItem(STORAGE_KEY)||'null');if(saved&&Array.isArray(saved.news))ARTICLES=saved.news;}catch(e){}
 function saveItems(items){
   const next=clone(items);
+  if(window.LEV_FIREBASE_ACTIVE){return typeof window.LEV_CLOUD_SAVE==='function'?window.LEV_CLOUD_SAVE(next,ARTICLES):(alert('Firebase ainda não conectado. Nenhum dado foi alterado.'),false);}
   try{localStorage.setItem(STORAGE_KEY,JSON.stringify({version:2,news:next}));}
   catch(e){alert('N\u00e3o foi poss\u00edvel salvar. O limite local de armazenamento pode ter sido atingido. Exporte um backup e reduza a quantidade de imagens.');return false;}
   ARTICLES=next;notifyViews();renderEditorial();return true;
@@ -335,32 +337,35 @@ $('#hubImages').addEventListener('change',async e=>{
 
 const statuses={draft:'Rascunho',review:'Em revisão',published:'Publicada',rejected:'Devolvida'};
 function statValue(label,value){return `<div class="hub-stat"><b>${value}</b><span>${label}</span></div>`;}
-function roleLabel(){return editorRole==='editor'?'Editor Lev (demonstração)':'Aprovador Lev (demonstração)';}
+function roleLabel(){return (editorRole==='editor'?'Editor Lev':'Editor e Aprovador Lev')+(window.LEV_FIREBASE_ACTIVE?' (Firebase)':' (demonstração)');}
 function deletionLabel(a){
   return a.type==='Comunicado'?'Excluir comunicado':a.type==='Capacita'?'Excluir CapacitaLev':'Excluir publicação';
 }
 function articleActions(a){
   const remove=`<button type="button" class="hub-button small hub-button-danger" data-hub-delete="${esc(a.id)}" aria-label="${esc(deletionLabel(a))}: ${esc(a.title)}">${deletionLabel(a)}</button>`;
-  if(editorRole==='editor'){
-    const actions=[];
-    if(a.status!=='published'){
-      actions.push(`<button class="hub-button light small" data-hub-edit="${esc(a.id)}">Editar</button>`);
-      if(a.status==='draft'||a.status==='rejected')actions.push(`<button class="hub-button small" data-hub-submit="${esc(a.id)}">Enviar para aprovação</button>`);
-    }
-    if(a.status==='published')actions.push(`<button class="hub-button outline small" data-hub-edit="${esc(a.id)}">Solicitar atualização</button>`);
-    actions.push(remove);
-    return actions.join('');
+  const canEdit=editorRole==='editor'||editorRole==='approver';
+  const canApprove=editorRole==='approver';
+  const actions=[];
+  if(canEdit){
+    actions.push(`<button class="hub-button light small" data-hub-edit="${esc(a.id)}">${a.status==='published'?'Editar (volta a rascunho)':'Editar'}</button>`);
+    if(a.status==='draft'||a.status==='rejected') actions.push(`<button class="hub-button small" data-hub-submit="${esc(a.id)}">Enviar para aprovação</button>`);
   }
-  if(a.status==='review')return `<button class="hub-button small" data-hub-approve="${esc(a.id)}">Aprovar e publicar</button><button class="hub-button outline small" data-hub-reject="${esc(a.id)}">Devolver</button>`+remove;
-  if(a.status==='published')return `<button class="hub-button outline small" data-hub-unpublish="${esc(a.id)}">Retirar da publicação</button>`+remove;
-  return `<span class="hub-mini-label">Aguardando edição</span>`+remove;
+  if(canApprove){
+    if(a.status==='review'){
+      actions.push(`<button class="hub-button small" data-hub-approve="${esc(a.id)}">Aprovar e publicar</button>`);
+      actions.push(`<button class="hub-button outline small" data-hub-reject="${esc(a.id)}">Devolver</button>`);
+    }
+    if(a.status==='published') actions.push(`<button class="hub-button outline small" data-hub-unpublish="${esc(a.id)}">Retirar da publicação</button>`);
+  }
+  if(canEdit)actions.push(remove);
+  return actions.join('');
 }
 function deleteEditorialItem(id){
   if(editorRole!=='editor'&&editorRole!=='approver')return;
   const current=ARTICLES.find(a=>String(a.id)===String(id));
   if(!current)return;
   const name=current.type==='Comunicado'?'este comunicado':current.type==='Capacita'?'este CapacitaLev':'esta publicação';
-  const visibility=current.status==='published'?'O conteúdo deixará de aparecer nos portais da Lev que compartilham os dados deste navegador.\n\n':'';
+  const visibility=current.status==='published'?(window.LEV_FIREBASE_ACTIVE?'O conteúdo deixará de aparecer em todos os portais conectados ao Firebase.\n\n':'O conteúdo deixará de aparecer nos portais da Lev que compartilham os dados deste navegador.\n\n'):'';
   if(!confirm('Excluir definitivamente '+name+'?\n\n'+current.title+'\n\n'+visibility+'Para recuperar o registro, será necessário importar um backup anterior.'))return;
   const remaining=ARTICLES.filter(a=>String(a.id)!==String(id));
   saveItems(remaining);
@@ -371,9 +376,9 @@ function renderEditorial(){
   $('#hubFilters').innerHTML=[['all','Todos'],['review','Em revisão'],['draft','Rascunhos'],['published','Publicadas'],['rejected','Devolvidas'],['comunicados','Comunicados'],['capacita','CapacitaLev']].map(([id,label])=>`<button class="hub-filter ${filterStatus===id?'active':''}" data-hub-filter="${id}">${label}</button>`).join('');
   const display=ARTICLES.filter(a=>filterStatus==='all'||(filterStatus==='capacita'?a.type==='Capacita':filterStatus==='comunicados'?a.type==='Comunicado':a.status===filterStatus)).sort((a,b)=>String(b.updatedAt||b.createdAt||'').localeCompare(String(a.updatedAt||a.createdAt||'')));
   $('#hubItems').innerHTML=display.length?display.map(a=>`<article class="hub-item ${a.urgent?'urgent':''}"><div class="hub-item-head"><div class="hub-badges"><span class="hub-badge status-${esc(a.status)}">${statuses[a.status]||'Em edição'}</span><span class="hub-badge">${esc(a.category)}</span><span class="hub-badge">${esc(a.type==='Capacita'?'CapacitaLev':a.type)}</span>${a.category==='Comissão'&&a.commissionAction?'<span class="hub-badge">'+esc(a.commissionAction)+'</span>':''}${a.urgent?'<span class="hub-badge urgent">URGENTE</span>':''}${a.demo?'<span class="hub-badge demo">TESTE</span>':''}</div></div><h3>${esc(a.title)}</h3><p>${esc(a.summary)}</p>${a.type==='Capacita'&&a.eventDate?`<div class="hub-event-meta">&#128197; ${esc(fmt(a.eventDate))} &#183; ${esc(a.eventTime||'--:--')} (Brasília) ${a.eventSpeakers?'&#183; '+esc(a.eventSpeakers):''} ${a.eventUrl? '&#183; Link cadastrado':''}</div>`:''}${safeImages(a.images).length?`<div class="hub-item-attachments"><img src="${esc(a.images[0].data)}" alt="Imagem anexada à notícia"><small>${safeImages(a.images).length} imagem(ns) anexada(s)</small></div>`:''}<div class="hub-meta"><span>Alterada: ${fmt(a.updatedAt)}</span><span>Publicada: ${fmt(a.publishedAt)}</span><span>Vigência: ${a.validUntil?fmt(a.validUntil):'não informada'}</span><span>Por: ${esc(a.author||'Equipe Lev')}</span></div><div class="hub-actions">${articleActions(a)}</div></article>`).join(''):'<div class="hub-empty">Não há publicações neste status.</div>';
-  $('#hubNewArticle').style.display=editorRole==='editor'?'':'none';
-  $('#hubNewCommission').style.display=editorRole==='editor'?'':'none';
-  $('#hubNewCapacita').style.display=editorRole==='editor'?'':'none';
+  $('#hubNewArticle').style.display=(editorRole==='editor'||editorRole==='approver')?'':'none';
+  $('#hubNewCommission').style.display=(editorRole==='editor'||editorRole==='approver')?'':'none';
+  $('#hubNewCapacita').style.display=(editorRole==='editor'||editorRole==='approver')?'':'none';
 }
 function updateCommissionFields(){
   const selected=$('#hubCategory').value==='Comissão';
@@ -402,7 +407,7 @@ function updateEventFields(){
   $('#hubDialogTitle').textContent=enabled?'Cadastrar CapacitaLev':'Cadastrar not\u00edcia';
 }
 function showModal(article=null,kind='Not\u00edcia'){
-  if(editorRole!=='editor')return;
+  if(editorRole!=='editor'&&editorRole!=='approver')return;
   const a=article||{};
   $('#hubArticleId').value=a.id||'';$('#hubTitle').value=a.title||'';
   $('#hubCategory').value=a.category||(kind==='Capacita'?'Produtos Lev':'INSS');
@@ -421,19 +426,19 @@ function showModal(article=null,kind='Not\u00edcia'){
 }
 function closeModal(){$('#hubModal').classList.remove('open');}
 function alterStatus(id,next){const arr=clone(ARTICLES),a=arr.find(x=>x.id===id);if(!a)return;
-  if(next==='review'&&editorRole!=='editor')return;
+  if(next==='review'&&editorRole!=='editor'&&editorRole!=='approver')return;
   if(['published','rejected','draft'].includes(next)&&editorRole!=='approver')return;
   if(next==='published'&&a.status!=='review')return;
   if(next==='review'&&!['draft','rejected'].includes(a.status))return;
    if(next==='review'&&a.type==='Capacita'&&(!a.eventDate||!a.eventTime||!safeImages(a.images).length)){alert('Para enviar este CapacitaLev para aprova\u00e7\u00e3o, informe data, hor\u00e1rio e pelo menos um convite em imagem.');return;}
    if(next==='published'&&a.type==='Capacita'&&(!/^\d{4}-\d{2}-\d{2}$/.test(a.eventDate||'')||!/^\d{2}:\d{2}$/.test(a.eventTime||'')||!safeImages(a.images).length)){alert('Este CapacitaLev precisa de data, hor\u00e1rio e convite em imagem antes da aprova\u00e7\u00e3o.');return;}
   a.status=next;a.updatedAt=nowIso();
-  if(next==='published'){a.publishedAt=nowIso();a.approver='Aprovador Lev (teste)';}else if(next!=='published')a.publishedAt='';
+  if(next==='published'){a.publishedAt=nowIso();a.approver=window.LEV_FIREBASE_ACTIVE?(window.LEV_CLOUD_AUTH_EMAIL||'Aprovador Lev'):'Aprovador Lev (teste)';}else if(next!=='published')a.publishedAt='';
   filterStatus=next;saveItems(arr);
 }
 function getId(){return 'lev-n-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,6);}
 $('#hubArticleForm').addEventListener('submit',e=>{
-  e.preventDefault();if(editorRole!=='editor')return;
+  e.preventDefault();if(editorRole!=='editor'&&editorRole!=='approver')return;
   if(imagesLoading){alert('Aguarde o processamento das imagens.');return;}
   const original=ARTICLES.find(x=>x.id===$('#hubArticleId').value)||null;
   const isCommission=$('#hubCategory').value==='Comissão';
@@ -451,7 +456,7 @@ $('#hubArticleForm').addEventListener('submit',e=>{
   const title=$('#hubTitle').value.trim();
   const summary=$('#hubSummary').value.trim()||(isCapacita?'CapacitaLev: '+title+' - '+dateBR+' \u00e0s '+eventTime+' (hor\u00e1rio de Bras\u00edlia).':'');
   const body=$('#hubBody').value.trim()||(isCapacita?'Participe do CapacitaLev '+title+'. Encontro '+eventMode.toLowerCase()+' em '+dateBR+' \u00e0s '+eventTime+' (Bras\u00edlia). '+(eventSpeakers?'Apresentadores: '+eventSpeakers+'.':'Consulte o convite para mais informa\u00e7\u00f5es.'):'');
-  const n={id:original?.id||getId(),title,summary,body,source:$('#hubSource').value.trim(),category:$('#hubCategory').value,type:isCommission?'Comunicado':$('#hubType').value,commissionAction,validUntil:$('#hubValidUntil').value,urgent:$('#hubUrgent').checked&&!isCapacita,images:safeImages(draftImages),eventDate,eventTime,eventSpeakers,eventMode,eventUrl,status:'draft',createdAt:original?.createdAt||nowIso(),updatedAt:nowIso(),publishedAt:'',author:'Editor Lev (teste)',approver:'',demo:original?.demo||false};
+  const n={id:original?.id||getId(),title,summary,body,source:$('#hubSource').value.trim(),category:$('#hubCategory').value,type:isCommission?'Comunicado':$('#hubType').value,commissionAction,validUntil:$('#hubValidUntil').value,urgent:$('#hubUrgent').checked&&!isCapacita,images:safeImages(draftImages),eventDate,eventTime,eventSpeakers,eventMode,eventUrl,status:'draft',createdAt:original?.createdAt||nowIso(),updatedAt:nowIso(),publishedAt:'',author:window.LEV_FIREBASE_ACTIVE?(window.LEV_CLOUD_AUTH_EMAIL||'Editor Lev'):'Editor Lev (teste)',approver:'',demo:original?.demo||false};
   const arr=clone(ARTICLES);const i=arr.findIndex(x=>x.id===n.id);if(i>=0)arr[i]=n;else arr.unshift(n);
   if(saveItems(arr)){closeModal();filterStatus=isCapacita?'capacita':'draft';renderEditorial();}
 });
@@ -483,8 +488,34 @@ $('#hubExportGC').addEventListener('click',()=>{
   setTimeout(()=>URL.revokeObjectURL(url),1500);
 });
 $('#hubImportBtn').addEventListener('click',()=>$('#hubImportFile').click());
-$('#hubImportFile').addEventListener('change',async e=>{const file=e.target.files[0];e.target.value='';if(!file)return;try{const obj=JSON.parse(await file.text());if(!Array.isArray(obj?.news)||obj.news.length>1500)throw Error('Arquivo de backup incompatível');const accepted=['draft','review','published','rejected'];const items=obj.news.filter(x=>x&&typeof x.title==='string'&&accepted.includes(x.status)).map(x=>({...x,title:String(x.title).slice(0,140),summary:String(x.summary||'').slice(0,420),body:String(x.body||'').slice(0,5000),category:['INSS','FGTS','CLT','Convênios Públicos','Comissão','Produtos Lev'].includes(x.category)?x.category:'Produtos Lev',commissionAction:['Inclusão','Alteração'].includes(x.commissionAction)?x.commissionAction:'',images:safeImages(x.images),eventDate:/^\d{4}-\d{2}-\d{2}$/.test(x.eventDate||'')?x.eventDate:'',eventTime:/^\d{2}:\d{2}$/.test(x.eventTime||'')?x.eventTime:'',eventSpeakers:String(x.eventSpeakers||'').slice(0,180),eventMode:['Online','Presencial','H\u00edbrido'].includes(x.eventMode)?x.eventMode:'Online',eventUrl:typeof x.eventUrl==='string'&&/^https?:\/\//i.test(x.eventUrl)?x.eventUrl.slice(0,1200):''}));if(!confirm('Importar backup vai substituir as notícias editoriais deste arquivo. Continuar?'))return;saveItems(items);}catch(err){alert(err.message||'Falha ao importar o backup.');}});
-renderEditorial();initCentralLogin();
+$('#hubImportFile').addEventListener('change',async e=>{const file=e.target.files[0];e.target.value='';if(!file)return;try{const obj=JSON.parse(await file.text());if(!Array.isArray(obj?.news)||obj.news.length>1500)throw Error('Arquivo de backup incompatível');const accepted=['draft','review','published','rejected'];const items=obj.news.filter(x=>x&&typeof x.title==='string'&&accepted.includes(x.status)).map(x=>({...x,title:String(x.title).slice(0,140),summary:String(x.summary||'').slice(0,420),body:String(x.body||'').slice(0,5000),category:['INSS','FGTS','CLT','Convênios Públicos','Comissão','Produtos Lev'].includes(x.category)?x.category:'Produtos Lev',commissionAction:['Inclusão','Alteração'].includes(x.commissionAction)?x.commissionAction:'',images:safeImages(x.images),eventDate:/^\d{4}-\d{2}-\d{2}$/.test(x.eventDate||'')?x.eventDate:'',eventTime:/^\d{2}:\d{2}$/.test(x.eventTime||'')?x.eventTime:'',eventSpeakers:String(x.eventSpeakers||'').slice(0,180),eventMode:['Online','Presencial','H\u00edbrido'].includes(x.eventMode)?x.eventMode:'Online',eventUrl:typeof x.eventUrl==='string'&&/^https?:\/\//i.test(x.eventUrl)?x.eventUrl.slice(0,1200):''}));if(window.LEV_FIREBASE_ACTIVE){
+          if(editorRole!=='approver'){alert('Para migrar backups à nuvem, entre com perfil Aprovador Lev.');return;}
+          if(!confirm('Importar '+items.length+' publicação(ões) para o Firebase? Publicações com mesmo ID serão atualizadas; as outras serão preservadas.'))return;
+          const merged=new Map(ARTICLES.map(a=>[String(a.id),a]));
+          items.forEach(a=>merged.set(String(a.id),a));
+          saveItems([...merged.values()]);
+        }else{if(!confirm('Importar backup vai substituir as notícias editoriais deste arquivo. Continuar?'))return;saveItems(items);}}catch(err){alert(err.message||'Falha ao importar o backup.');}});
+renderEditorial();
+if(!window.LEV_FIREBASE_ACTIVE)initCentralLogin();
+else {document.getElementById('hubApp').hidden=true;document.getElementById('centralLogin').hidden=true;}
+window.LEV_CENTRAL_CLOUD_LOCK=()=>{ARTICLES=[];document.getElementById('hubApp').hidden=true;document.getElementById('centralLogin').hidden=true;renderEditorial();};
+window.LEV_CENTRAL_CLOUD_ENTER=(role,email)=>{
+  ARTICLES=[];editorRole=role;filterStatus='all';
+  document.getElementById('centralLogin').hidden=true;
+  document.getElementById('hubApp').hidden=false;
+  const roleSwitch=document.getElementById('centralRoleSwitch');
+  roleSwitch.value=role;roleSwitch.disabled=true;roleSwitch.closest('label').style.display='none';
+  const roleText=document.getElementById('centralCurrentRole');
+  roleText.hidden=false;roleText.textContent=(role==='editor'?'Editor Lev':'Editor e Aprovador Lev')+' • '+email;
+  const demo=document.querySelector('.hub-demo');if(demo)demo.textContent='FIREBASE • TESTE';
+  const banner=document.querySelector('.hub-banner');if(banner)banner.innerHTML='<span>☁</span><div><b>Sincronização online ativada.</b> Alterações são salvas no Firebase e as notícias aprovadas são disponibilizadas em outros computadores. Não use dados sigilosos neste teste público. Exportações continuam disponíveis para backup.</div>';
+  renderEditorial();
+};
+window.LEV_CENTRAL_CLOUD_APPLY=items=>{
+  if(!window.LEV_FIREBASE_ACTIVE)return;
+  ARTICLES=clone(items);renderEditorial();notifyViews();
+};
+
 
 function initCentralLogin(){
   const shell=document.getElementById('hubApp');
@@ -499,7 +530,7 @@ function initCentralLogin(){
     if(role!=='editor'&&role!=='approver'){shell.hidden=true;login.hidden=false;return;}
     editorRole=role;filterStatus='all';
     login.hidden=true;shell.hidden=false;closeModal();
-    const roleName=role==='editor'?'Editor Lev':'Aprovador Lev';
+    const roleName=role==='editor'?'Editor Lev':'Editor e Aprovador Lev';
     document.getElementById('centralCurrentRole').textContent=roleName;
     document.getElementById('centralRoleSwitch').value=role;
     renderEditorial();
@@ -558,13 +589,13 @@ function expJSON(filename,data){let blob=new Blob([JSON.stringify(data,null,2)],
 function actRole(){return document.getElementById('centralRoleSwitch')?.value||'editor'}
 function displayDate(date,time){try{return new Date(date+'T12:00:00').toLocaleDateString('pt-BR')+' às '+time+' (Brasília)'}catch(e){return date+' '+time}}
 function bookingRender(){const d=readSchedule(),rh=readHR(),app=document.getElementById('levintCentralArea');if(!app)return;
-const isEditor=actRole()==='editor',isApprover=actRole()==='approver';const targets=SERVICES.map(x=>`<option value="s:${esc(x.name)}">${esc(x.name)}</option>`).join('');
+const isEditor=['editor','approver'].includes(actRole()),isApprover=actRole()==='approver';const targets=SERVICES.map(x=>`<option value="s:${esc(x.name)}">${esc(x.name)}</option>`).join('');
 const future=d.slots.filter(slotAllowed).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));const bk=d.bookings.filter(b=>d.slots.some(s=>s.id===b.slotId&&slotAllowed(s))).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));
 const slotList=future.map(s=>{const accepted=bk.filter(b=>b.slotId===s.id&&b.status==='approved').length;return `<article class="levint-slot"><div><strong>${esc(personLabel(s))} · ${esc(s.subject)}</strong><small>${esc(displayDate(s.date,s.time))} · ${esc(s.duration)} min · aprovados ${accepted}/${s.capacity||1}</small>${!slotAllowed(s)?'<em>HORÁRIO ANTIGO (não oferecido ao parceiro)</em>':s.demo?'<em>HORÁRIO DE TESTE</em>':''}</div>${isEditor?`<button class="levint-btn danger" type="button" data-levint-admin="del-slot" data-id="${esc(s.id)}">Excluir</button>`:''}</article>`}).join('');
 const bookList=bk.map(b=>{const s=d.slots.find(x=>x.id===b.slotId);return `<article class="levint-slot"><div><strong>${esc(b.company)} → ${esc(s?personLabel(s):(b.consultant||b.sector||'Equipe Lev'))}</strong><small>${esc(s?displayDate(s.date,s.time):'Horário removido')} · ${esc(b.note||'Sem observações')} · contato ${esc(b.contact||'não informado')}</small><span class="levint-status ${b.status==='approved'?'ok':b.status==='rejected'?'no':''}">${b.status==='approved'?'Aprovado':b.status==='rejected'?'Recusado':'Aguardando aprovação'}</span></div>${isApprover&&b.status==='pending'?`<div class="levint-actions"><button type="button" class="levint-btn" data-levint-admin="approve" data-id="${esc(b.id)}">Aprovar</button><button type="button" class="levint-btn danger" data-levint-admin="reject" data-id="${esc(b.id)}">Recusar</button></div>`:''}</article>`}).join('');
 const hrList=rh.slice().reverse().map(r=>`<article class="levint-slot"><div><strong>${esc(r.name)} · ${esc(r.role)}</strong><small>${esc(r.regional||'Regional não informada')} · início ${esc(r.start||'a definir')} · solicitante ${esc(r.requester||'não informado')}</small><span class="levint-status ${r.status==='encaminhado'?'ok':''}">${r.status==='encaminhado'?'Preparado para RH (local)':'Aguardando encaminhamento'}</span></div>${isApprover&&r.status!=='encaminhado'?`<button class="levint-btn light" data-levint-admin="route-rh" data-id="${esc(r.id)}">Registrar encaminhamento</button>`:''}</article>`).join('');
 const capacita=(window.LEV_NEWS_HUB?.list?.()||[]).filter(a=>a.status==='published'&&a.type==='Capacita'&&a.eventDate&&a.eventTime).slice().sort((a,b)=>(a.eventDate+a.eventTime).localeCompare(b.eventDate+b.eventTime));
-app.innerHTML=`<div class="levint-head"><div><span class="levint-eyebrow">Central Editorial · fluxos de integração</span><h2 class="levint-title">Agenda Lev: Qualidade, Onboarding e Treinamento de Digitação</h2><p class="levint-sub">Controle demonstrativo de horários, solicitações dos parceiros, encaminhamentos internos e divulgação do CapacitaLev.</p></div><span class="levint-pill warn">Sem conexão externa</span></div><div class="levint-note">⚠️ Horários, encaminhamentos e aprovações são locais. Esta versão ainda não cria compromissos no Google Calendar/Outlook, não encaminha solicitações ao RH real e não envia WhatsApp automaticamente. Para compartilhar entre arquivos, use o mesmo endereço HTTP local.</div><div class="levint-grid"><section class="levint-panel"><h3>📅 Disponibilizar horários de atendimento</h3>${isEditor?`<form id="levintAdminSlotForm" class="levint-form"><label class="levint-field">Setor ou treinamento<select name="target" required>${targets}</select></label><label class="levint-field">Motivo/atendimento<input name="subject" maxlength="110" required placeholder="Ex.: Orientações de Qualidade ou Treinamento de Digitação"></label><div class="levint-fields"><label class="levint-field">Data<input type="date" name="date" required min="${dateAdd(0)}" value="${dateAdd(4)}"></label><label class="levint-field">Hora Brasília<input type="time" name="time" required value="10:00"></label></div><div class="levint-fields"><label class="levint-field">Duração<select name="duration"><option>30</option><option>45</option><option>60</option></select></label><label class="levint-field">Vagas<select name="capacity"><option>1</option><option>2</option><option>3</option><option>5</option></select></label></div><label class="levint-field">Link da reunião (opcional)<input type="url" name="meetingUrl" placeholder="https://teams.microsoft.com/..."></label><button type="submit" class="levint-btn">+ Publicar horário de teste</button></form>`:'<div class="levint-empty">Alterne para Editor Lev para cadastrar ou remover horários.</div>'}<div class="levint-actions"><button class="levint-btn light" data-levint-admin="export-bookings">Exportar agenda (JSON)</button><label class="levint-btn light" style="cursor:pointer">Importar agenda <input id="levintImportAgenda" type="file" accept=".json,application/json" hidden></label></div></section><section class="levint-panel"><h3>🗓️ Horários registrados (${future.length})</h3><div class="levint-list">${slotList||'<div class="levint-empty">Nenhum horário cadastrado.</div>'}</div></section></div><div class="levint-grid" style="margin-top:14px"><section class="levint-panel"><h3>✅ Solicitações dos parceiros (${bk.length})</h3><div class="levint-list">${bookList||'<div class="levint-empty">Ainda não há solicitações.</div>'}</div></section><section class="levint-panel"><h3>👥 Direcionamento ao RH</h3><p>Pedidos de acesso e acompanhamento inicial para novos GCs ou colaboradores. Não há comunicação automática com o RH nesta versão.</p>${isEditor?`<form id="levintCentralHrForm" class="levint-form"><div class="levint-fields"><label class="levint-field">Novo colaborador (teste)<input name="name" required maxlength="90" placeholder="Ex.: GC Demonstração"></label><label class="levint-field">Perfil<select name="role"><option>Gerente Comercial</option><option>Colaborador</option><option>Regional</option><option>Head</option></select></label></div><div class="levint-fields"><label class="levint-field">Regional<input name="regional" maxlength="70" placeholder="Ex.: Norte"></label><label class="levint-field">Início previsto<input type="date" name="start" value="${dateAdd(7)}"></label></div><label class="levint-field">Solicitante / gestor<input name="requester" maxlength="80" placeholder="Ex.: Gerente responsável"></label><button class="levint-btn" type="submit">Criar solicitação interna</button></form>`:''}<div class="levint-list" style="margin-top:13px">${hrList||'<div class="levint-empty">Nenhuma solicitação de RH registrada.</div>'}</div><div class="levint-actions"><button class="levint-btn light" data-levint-admin="export-rh">Exportar RH (JSON)</button></div></section></div><section class="levint-panel" style="margin-top:14px"><h3>📲 Divulgar CapacitaLev no WhatsApp</h3><p>Compartilhamento manual por link do WhatsApp. O usuário escolhe os destinatários e confirma o envio. Imagens dos convites devem ser anexadas no WhatsApp separadamente.</p>${capacita.length?`<div class="levint-list">${capacita.map(a=>`<article class="levint-slot"><div><strong>${esc(a.title)}</strong><small>${esc(displayDate(a.eventDate,a.eventTime))} · ${esc(a.eventSpeakers||'Apresentação Lev')}</small></div><button class="levint-btn orange" data-levint-admin="whatsapp" data-id="${esc(a.id)}">Compartilhar no WhatsApp ↗</button></article>`).join('')}</div>`:'<div class="levint-empty">Cadastre e aprove um novo CapacitaLev para habilitar o compartilhamento aqui.</div>'}</section>`;
+app.innerHTML=`<div class="levint-head"><div><span class="levint-eyebrow">Central Editorial · fluxos de integração</span><h2 class="levint-title">Agenda Lev: Qualidade, Onboarding e Treinamento de Digitação</h2><p class="levint-sub">Controle demonstrativo de horários, solicitações dos parceiros, encaminhamentos internos e divulgação do CapacitaLev.</p></div><span class="levint-pill warn">Sem conexão externa</span></div><div class="levint-note">⚠️ Horários, encaminhamentos e aprovações são locais. Esta versão ainda não cria compromissos no Google Calendar/Outlook, não encaminha solicitações ao RH real e não envia WhatsApp automaticamente. Para compartilhar entre arquivos, use o mesmo endereço HTTP local.</div><div class="levint-grid"><section class="levint-panel"><h3>📅 Disponibilizar horários de atendimento</h3>${isEditor?`<form id="levintAdminSlotForm" class="levint-form"><label class="levint-field">Setor ou treinamento<select name="target" required>${targets}</select></label><label class="levint-field">Motivo/atendimento<input name="subject" maxlength="110" required placeholder="Ex.: Orientações de Qualidade ou Treinamento de Digitação"></label><div class="levint-fields"><label class="levint-field">Data<input type="date" name="date" required min="${dateAdd(0)}" value="${dateAdd(4)}"></label><label class="levint-field">Hora Brasília<input type="time" name="time" required value="10:00"></label></div><div class="levint-fields"><label class="levint-field">Duração<select name="duration"><option>30</option><option>45</option><option>60</option></select></label><label class="levint-field">Vagas<select name="capacity"><option>1</option><option>2</option><option>3</option><option>5</option></select></label></div><label class="levint-field">Link da reunião (opcional)<input type="url" name="meetingUrl" placeholder="https://teams.microsoft.com/..."></label><button type="submit" class="levint-btn">+ Publicar horário de teste</button></form>`:'<div class="levint-empty">Entre com uma conta da equipe Lev para cadastrar ou remover horários.</div>'}<div class="levint-actions"><button class="levint-btn light" data-levint-admin="export-bookings">Exportar agenda (JSON)</button><label class="levint-btn light" style="cursor:pointer">Importar agenda <input id="levintImportAgenda" type="file" accept=".json,application/json" hidden></label></div></section><section class="levint-panel"><h3>🗓️ Horários registrados (${future.length})</h3><div class="levint-list">${slotList||'<div class="levint-empty">Nenhum horário cadastrado.</div>'}</div></section></div><div class="levint-grid" style="margin-top:14px"><section class="levint-panel"><h3>✅ Solicitações dos parceiros (${bk.length})</h3><div class="levint-list">${bookList||'<div class="levint-empty">Ainda não há solicitações.</div>'}</div></section><section class="levint-panel"><h3>👥 Direcionamento ao RH</h3><p>Pedidos de acesso e acompanhamento inicial para novos GCs ou colaboradores. Não há comunicação automática com o RH nesta versão.</p>${isEditor?`<form id="levintCentralHrForm" class="levint-form"><div class="levint-fields"><label class="levint-field">Novo colaborador (teste)<input name="name" required maxlength="90" placeholder="Ex.: GC Demonstração"></label><label class="levint-field">Perfil<select name="role"><option>Gerente Comercial</option><option>Colaborador</option><option>Regional</option><option>Head</option></select></label></div><div class="levint-fields"><label class="levint-field">Regional<input name="regional" maxlength="70" placeholder="Ex.: Norte"></label><label class="levint-field">Início previsto<input type="date" name="start" value="${dateAdd(7)}"></label></div><label class="levint-field">Solicitante / gestor<input name="requester" maxlength="80" placeholder="Ex.: Gerente responsável"></label><button class="levint-btn" type="submit">Criar solicitação interna</button></form>`:''}<div class="levint-list" style="margin-top:13px">${hrList||'<div class="levint-empty">Nenhuma solicitação de RH registrada.</div>'}</div><div class="levint-actions"><button class="levint-btn light" data-levint-admin="export-rh">Exportar RH (JSON)</button></div></section></div><section class="levint-panel" style="margin-top:14px"><h3>📲 Divulgar CapacitaLev no WhatsApp</h3><p>Compartilhamento manual por link do WhatsApp. O usuário escolhe os destinatários e confirma o envio. Imagens dos convites devem ser anexadas no WhatsApp separadamente.</p>${capacita.length?`<div class="levint-list">${capacita.map(a=>`<article class="levint-slot"><div><strong>${esc(a.title)}</strong><small>${esc(displayDate(a.eventDate,a.eventTime))} · ${esc(a.eventSpeakers||'Apresentação Lev')}</small></div><button class="levint-btn orange" data-levint-admin="whatsapp" data-id="${esc(a.id)}">Compartilhar no WhatsApp ↗</button></article>`).join('')}</div>`:'<div class="levint-empty">Cadastre e aprove um novo CapacitaLev para habilitar o compartilhamento aqui.</div>'}</section>`;
 }
 function initUI(){const hub=document.getElementById('hubApp');if(!hub)return;initSeed();let panel=document.getElementById('levintCentralArea');if(!panel){panel=document.createElement('section');panel.id='levintCentralArea';panel.className='levint-admin';hub.appendChild(panel)}
 const button=document.createElement('button');button.type='button';button.className='hub-button outline';button.id='levintJumpAgenda';button.textContent='📅 Agendamentos e RH';button.addEventListener('click',()=>panel.scrollIntoView({behavior:'smooth',block:'start'}));let target=document.querySelector('#hubNewArticle');if(target)target.insertAdjacentElement('afterend',button);
@@ -587,4 +618,5 @@ document.addEventListener('change',e=>{if(e.target?.id!=='levintImportAgenda')re
 <nav id="lev-ecosystem-switcher" aria-label="Navegar entre os sistemas Lev">
 <details><summary><span class="lev-switch-icon">LEV</span> Sistemas Lev <span class="lev-switch-chevron" aria-hidden="true">▾</span></summary>
 <div class="lev-switch-panel"><div class="lev-switch-kicker">Ecossistema Lev · Teste</div><a href="ecossistema.html"><span>Início do Ecossistema</span><span class="lev-switch-tag">Início</span></a><a href="index.html"><span>Lev Comunidade</span><span class="lev-switch-tag">Parceiros</span></a><a href="gc360.html"><span>LEV GC 360</span><span class="lev-switch-tag">Gerentes</span></a><a href="central.html" aria-current="page"><span>Central Editorial</span><span class="lev-switch-tag">Equipe Lev</span></a><div class="lev-switch-note">Ambiente demonstrativo e público. Não utilize dados reais ou sigilosos.</div></div></details></nav>
+<script type="module" src="./lev-firebase.js"></script>
 </body></html>
